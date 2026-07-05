@@ -92,3 +92,15 @@ Because the daemon approves tool use unattended, two guardrails apply:
 - `src/client.js` — reusable `AcpClient` (importable ACP-over-stdio client).
 - `src/daemon.js` — holds the session, serves tasks over the socket.
 - `bin/pi-acp.js` — the CLI.
+- `src/danger.js` — dangerous-command guard patterns.
+
+## Skills & docs
+
+[agentskills.io](https://agentskills.io)-format skills for agents driving this tool:
+
+- `skills/using-pi-acp/` — operate the daemon: commands, models, safety,
+  architecture (with reference files).
+- `skills/delegating-to-pi-acp/` — the pattern for handing tasks to it as a
+  persistent second agent.
+
+Design/protocol findings from building it: [`docs/LEARNINGS.md`](docs/LEARNINGS.md).
