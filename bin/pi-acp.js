@@ -3,6 +3,7 @@
 import { Command } from "commander";
 import net from "node:net";
 import fs from "node:fs";
+import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -37,6 +38,15 @@ function isRunning() {
     return pid;
   } catch {
     return false;
+  }
+}
+
+// Remove leftover runtime files (socket/pid/meta) from a dead daemon.
+function cleanStaleFiles() {
+  for (const p of [SOCK_PATH, PID_PATH, META_PATH]) {
+    try {
+      fs.unlinkSync(p);
+    } catch {}
   }
 }
 
@@ -75,6 +85,19 @@ function die(msg) {
   process.exit(1);
 }
 
+// Ask a yes/no question. Auto-yes when --yes is passed or there's no TTY
+// (so scripted/agent callers never hang waiting on input).
+function confirm(question, assumeYes) {
+  if (assumeYes || !process.stdin.isTTY) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`${question} [y/N] `, (ans) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(ans.trim()));
+    });
+  });
+}
+
 // --- commands ------------------------------------------------------------
 
 program
@@ -86,6 +109,7 @@ program
   .action(async (opts) => {
     const running = isRunning();
     if (running) die(`already running (pid ${running}). Use 'pi-acp stop' first.`);
+    cleanStaleFiles(); // clear leftovers from a previously-crashed daemon
 
     const model = resolveModel(opts.model);
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -198,13 +222,52 @@ program
 
 program
   .command("stop")
-  .description("Stop the daemon and close the session")
-  .action(async () => {
-    if (!isRunning()) {
+  .description("Close the session cleanly, stop the daemon, remove runtime files")
+  .option("-y, --yes", "skip the confirmation prompt")
+  .option("-f, --force", "stop even if a task is currently running")
+  .action(async (opts) => {
+    const pid = isRunning();
+    if (!pid) {
+      cleanStaleFiles();
       console.log("already stopped");
       return;
     }
+
+    // Look before we leap: report where the session did its work and whether a
+    // task is still running, so we never quietly discard in-flight work.
+    const events = await request({ cmd: "status" }).catch(() => []);
+    const s = events.find((e) => e.type === "status") || {};
+    if (s.busy && !opts.force) {
+      die(`✗ session is busy running a task (turn ${s.turns + 1}). Wait for it to finish, or use: pi-acp stop --force`);
+    }
+
+    // pi-acp only ever removes its OWN runtime files. The session's working
+    // directory and any files the agent created/edited there are left untouched.
+    console.log("This will close the omp session and remove runtime files:");
+    console.log(`  ${SOCK_PATH}`);
+    console.log(`  ${PID_PATH}`);
+    console.log(`  ${META_PATH}`);
+    console.log(`The daemon log is kept. Working dir (${s.cwd || "?"}) is NOT touched.`);
+    if (s.busy) console.log("⚠  A task is still running and will be interrupted (--force).");
+    if (!(await confirm("Proceed?", opts.yes))) {
+      console.log("aborted — session left running");
+      return;
+    }
+
+    // Ask the daemon to close its session gracefully.
     await request({ cmd: "stop" }).catch(() => {});
+    // Wait for it to actually exit; escalate if it lingers.
+    for (let i = 0; i < 20; i++) {
+      if (!isRunning()) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (isRunning()) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    cleanStaleFiles();
     console.log("✓ stopped");
   });
 

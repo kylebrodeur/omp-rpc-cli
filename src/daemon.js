@@ -36,7 +36,10 @@ client.on("exit", ({ code, sig }) => {
   cleanup();
   process.exit(1);
 });
-client.on("permission", ({ chose }) => log("auto-approved permission -> " + chose));
+client.on("permission", ({ action, why, command, chose }) => {
+  if (action === "block") log(`BLOCKED dangerous command (${why}): ${String(command).slice(0, 200)} -> ${chose}`);
+  else log(`approved permission -> ${chose}`);
+});
 
 async function boot() {
   const init = await client.start();
@@ -129,10 +132,8 @@ async function dispatch(req, write, conn) {
     case "stop":
       write({ type: "status", stopping: true });
       conn.end();
-      log("stop requested");
-      cleanup();
-      client.stop();
-      process.exit(0);
+      log("stop requested — closing session");
+      await shutdown(0);
       return;
     case "prompt": {
       if (busy) {
@@ -168,23 +169,34 @@ async function dispatch(req, write, conn) {
 }
 
 function cleanup() {
-  for (const p of [SOCK_PATH, PID_PATH]) {
+  for (const p of [SOCK_PATH, PID_PATH, META_PATH]) {
     try {
       fs.unlinkSync(p);
     } catch {}
   }
 }
 
+let shuttingDown = false;
+// Single graceful-shutdown path: close the ACP session, remove runtime files,
+// then exit. Idempotent — safe to call from stop, signals, or errors.
+async function shutdown(code) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await client.close();
+  } catch {}
+  cleanup();
+  log("shutdown complete");
+  process.exit(code);
+}
+
 process.on("SIGTERM", () => {
   log("SIGTERM");
-  cleanup();
-  client.stop();
-  process.exit(0);
+  shutdown(0);
 });
 process.on("SIGINT", () => {
-  cleanup();
-  client.stop();
-  process.exit(0);
+  log("SIGINT");
+  shutdown(0);
 });
 
 boot().catch((e) => {

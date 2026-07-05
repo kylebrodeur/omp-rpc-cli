@@ -7,6 +7,7 @@
 //   - notifications (session/update) which stream the turn
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { classifyCommand, extractCommand } from "./danger.js";
 
 export class AcpClient extends EventEmitter {
   constructor({ model, cwd } = {}) {
@@ -74,6 +75,20 @@ export class AcpClient extends EventEmitter {
     }
   }
 
+  // Politely close the ACP session (omp advertises sessionCapabilities.close),
+  // then tear down the child process. Best-effort: never throws.
+  async close() {
+    if (this.sessionId && this.capabilities?.sessionCapabilities?.close) {
+      try {
+        await Promise.race([
+          this._send("session/close", { sessionId: this.sessionId }),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
+      } catch {}
+    }
+    this.stop();
+  }
+
   stop() {
     try {
       this.child?.stdin.end();
@@ -126,10 +141,24 @@ export class AcpClient extends EventEmitter {
     if (msg.method && msg.id !== undefined) {
       if (msg.method === "session/request_permission") {
         const opts = msg.params?.options || [];
+        const toolCall = msg.params?.toolCall;
+        const command = extractCommand(toolCall);
+        // Guard: block clearly destructive shell commands even in auto-approve.
+        const verdict = toolCall?.kind === "execute" ? classifyCommand(command) : { action: "allow" };
+        const wantKind = verdict.action === "block" ? /^reject/ : /^allow/;
         const pick =
-          opts.find((o) => /allow|yes|accept|approve/i.test((o.name || "") + (o.optionId || o.kind || ""))) ||
+          opts.find((o) => wantKind.test(o.kind || o.optionId || "")) ||
+          (verdict.action === "block"
+            ? opts.find((o) => /reject|deny|no/i.test((o.name || "") + (o.optionId || "")))
+            : opts.find((o) => /allow|yes|accept|approve/i.test((o.name || "") + (o.optionId || "")))) ||
           opts[0];
-        this.emit("permission", { params: msg.params, chose: pick?.optionId });
+        this.emit("permission", {
+          params: msg.params,
+          command,
+          action: verdict.action,
+          why: verdict.why,
+          chose: pick?.optionId,
+        });
         this._respond(msg.id, { outcome: { outcome: "selected", optionId: pick?.optionId } });
       } else {
         // fs reads/writes etc. — we declared no fs capability, so reply empty.

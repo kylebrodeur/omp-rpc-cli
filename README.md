@@ -36,7 +36,8 @@ pi-acp send --json  "..."          # raw {stopReason, usage}
 pi-acp status                      # pid, model, session id, turn count, busy?
 pi-acp mode plan                   # toggle default ↔ plan live
 pi-acp logs -n 60                  # daemon log
-pi-acp stop                        # close session + exit
+pi-acp stop                        # close session + clean up (see Safety)
+pi-acp stop --force                # stop even mid-task; -y skips the prompt
 pi-acp models                      # built-in aliases
 ```
 
@@ -62,9 +63,29 @@ pi-acp send ──unix socket──▶ daemon ──stdio (ACP JSON-RPC)──�
 - **Model is fixed at `start`** — omp's ACP has no `session/set_model`; pick it
   when the session boots.
 - **Mode is live** — `session/set_mode` toggles default ↔ plan on the open session.
-- **Permissions auto-approve** so the session runs unattended (headless).
+- **Permissions auto-approve** so the session runs unattended (headless) —
+  *except* commands the danger guard flags (see Safety).
 - Runtime state lives in `~/.pi-acp/` (`daemon.sock`, `daemon.pid`,
   `daemon.json`, `daemon.log`); override with `PI_ACP_DIR`.
+
+## Safety
+
+Because the daemon approves tool use unattended, two guardrails apply:
+
+- **Dangerous-command guard** (`src/danger.js`). Before approving an `execute`
+  permission, the command is matched against destructive patterns —
+  recursive force-`rm` of root/home/cwd, `mkfs`, `dd` to a raw disk,
+  `shred`/`wipe`, fork bombs, `curl|wget … | sh`, recursive `chmod`/`chown` on
+  `/`, `shutdown`/`reboot`, destructive `git clean/reset`. A match is **rejected**
+  (logged as `BLOCKED …`) and the agent is told no; everything else is allowed.
+  It's a blast-radius net, not a sandbox — tune the patterns to taste.
+- **Safe stop / cleanup.** `pi-acp stop` refuses to tear down a session that's
+  **mid-task** (use `--force` to override), lists exactly which runtime files it
+  will remove, and **never touches the session's working directory** or anything
+  the agent created there. It only deletes `daemon.sock`/`daemon.pid`/
+  `daemon.json`; the log is kept. In a terminal it asks to confirm; when scripted
+  (no TTY) or with `-y` it proceeds without prompting. Shutdown first sends ACP
+  `session/close`, then removes the files.
 
 ## Files
 
