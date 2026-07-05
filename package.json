@@ -1,0 +1,23 @@
+{
+  "name": "pi-acp-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Long-running Oh My Pi (omp) ACP session as a daemon, with a thin CLI to send tasks to it. Lets a driving agent (e.g. Claude Code) delegate work to a persistent pi session over the Agent Client Protocol.",
+  "keywords": ["pi", "omp", "oh-my-pi", "acp", "agent-client-protocol", "cli", "daemon", "ollama"],
+  "license": "MIT",
+  "author": "Kyle Brodeur <kyle@uof.digital>",
+  "bin": {
+    "pi-acp": "./bin/pi-acp.js"
+  },
+  "files": ["bin/", "src/", "README.md", "LICENSE"],
+  "scripts": {
+    "start": "node bin/pi-acp.js start",
+    "status": "node bin/pi-acp.js status"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
