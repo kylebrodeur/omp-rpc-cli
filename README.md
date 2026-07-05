@@ -45,13 +45,14 @@ pi-acp models                      # built-in aliases
 
 | alias | omp id | context |
 |-------|--------|---------|
-| `glm` (default) | `ollama-cloud/glm-5.2` | 1,000,000 |
-| `kimi` | `ollama-cloud/kimi-k2.7-code` | 262,144 |
-| `deepseek` | `ollama-cloud/deepseek-v4-pro` | 524,288 |
-| `gemma` | `ollama-cloud/gemma4:31b` | 262,144 |
+| `glm` (default) | `ollama/glm-5.2:cloud` | 1,000,000 |
+| `kimi` | `ollama/kimi-k2.7-code:cloud` | 262,144 |
+| `deepseek` | `ollama/deepseek-v4-pro:cloud` | 524,288 |
+| `gemma` | `ollama/gemma4:31b-cloud` | 262,144 |
 
-Any raw omp id also works: `--model anthropic/claude-opus-4-8`. Full list:
-`omp models list`.
+Any raw omp id also works: `--model anthropic/claude-opus-4-8`. Confirm exact ids
+with `omp models list --json` (the `selector` field). omp also exposes the same
+models under an `ollama-cloud/<id>` provider; either works if authenticated.
 
 ## How it works
 

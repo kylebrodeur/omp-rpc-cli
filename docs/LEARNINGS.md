@@ -35,10 +35,15 @@ each shaped a design decision.
 
 ## omp models / Ollama Cloud
 
-- **Ollama Cloud models live under the `ollama-cloud/` provider prefix.**
-  `omp models list --json` returns objects with `provider`, `id`, and a
-  `selector` (e.g. `ollama-cloud/glm-5.2`) — the selector is what `--model`
-  wants; omp also fuzzy-matches short names.
+- **The same Ollama Cloud model is exposed under TWO providers.** omp lists both
+  `ollama/<id>:cloud` (the local `ollama` runtime's cloud models, e.g.
+  `ollama/glm-5.2:cloud`) and `ollama-cloud/<id>` (a direct provider, e.g.
+  `ollama-cloud/glm-5.2`). Both launch and return real completions if
+  authenticated — verified by sending a prompt through each. They authenticate
+  via different paths, so pick the one your `omp`/`ollama` setup is signed into.
+  pi-acp standardizes on `ollama/*:cloud`. **Always get the exact id from
+  `omp models list --json` (`selector` field); do not hand-construct it** — the
+  suffix placement differs (`gemma4:31b-cloud` vs `gemma4:31b`).
 - **Context windows vary widely:** glm-5.2 = 1,000,000; deepseek-v4-pro = 524,288;
   kimi-k2.7-code and gemma4:31b = 262,144. For a session that accumulates history
   across many turns, the biggest window (glm) is the safest default.

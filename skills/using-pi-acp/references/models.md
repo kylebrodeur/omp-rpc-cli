@@ -2,14 +2,21 @@
 
 ## Aliases
 
-Defined in `src/config.js`. All are Ollama Cloud models (`ollama-cloud/*`).
+Defined in `src/config.js`. All are Ollama Cloud models addressed via the local
+`ollama` runtime's cloud models (the `ollama/<id>:cloud` form).
 
 | Alias | omp id | Context | Notes |
 |---|---|---|---|
-| `glm` *(default)* | `ollama-cloud/glm-5.2` | 1,000,000 | biggest context — best for a session that accumulates many turns |
-| `kimi` | `ollama-cloud/kimi-k2.7-code` | 262,144 | coding-tuned |
-| `deepseek` | `ollama-cloud/deepseek-v4-pro` | 524,288 | strong reasoning |
-| `gemma` | `ollama-cloud/gemma4:31b` | 262,144 | lighter/faster |
+| `glm` *(default)* | `ollama/glm-5.2:cloud` | 1,000,000 | biggest context — best for a session that accumulates many turns |
+| `kimi` | `ollama/kimi-k2.7-code:cloud` | 262,144 | coding-tuned |
+| `deepseek` | `ollama/deepseek-v4-pro:cloud` | 524,288 | strong reasoning |
+| `gemma` | `ollama/gemma4:31b-cloud` | 262,144 | lighter/faster |
+
+> **Two providers, same models.** omp also exposes an `ollama-cloud/<id>`
+> provider (e.g. `ollama-cloud/glm-5.2`) for these same models. Either works if
+> authenticated; pi-acp standardizes on the `ollama/*:cloud` form. Always confirm
+> an exact id with `omp models list --json` (the `selector` field) rather than
+> hand-constructing it.
 
 ## Choosing
 
@@ -47,5 +54,5 @@ omp models list            # human-readable
 omp models list --json     # objects with provider/id/selector/contextWindow/...
 ```
 
-The `selector` field (e.g. `ollama-cloud/glm-5.2`) is exactly what `--model`
+The `selector` field (e.g. `ollama/glm-5.2:cloud`) is exactly what `--model`
 expects; omp also fuzzy-matches short names.
