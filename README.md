@@ -18,12 +18,10 @@ accumulates across tasks** — you can build on earlier work.
 ## Install
 
 ```sh
-cd omp-rpc-cli
-pnpm install
-pnpm link --global      # exposes `omp-rpc` on your PATH
+npm  install -g omp-rpc-cli     # or: pnpm add -g omp-rpc-cli
 ```
 
-Requires `omp` on your PATH and Node ≥ 20.
+This puts `omp-rpc` on your PATH. Requires `omp` on your PATH and Node ≥ 20.
 
 ## Use
 
@@ -107,13 +105,19 @@ Because the daemon approves tool use unattended, two guardrails apply:
 - `bin/omp-rpc.js` — the CLI.
 - `src/danger.js` — dangerous-command guard patterns.
 
-## Skills & docs
+## Skills for driving agents
 
-[agentskills.io](https://agentskills.io)-format skills for agents driving this tool:
+This repo ships two [agent skills](https://github.com/vercel-labs/skills) that
+teach a driving agent (Claude Code, etc.) how to use `omp-rpc`. Install them
+straight from the repo with the `skills` CLI:
 
-- `skills/using-omp-rpc/` — operate the daemon: commands, models, safety,
-  architecture (with reference files).
-- `skills/delegating-to-omp-rpc/` — the pattern for handing tasks to it as a
+```sh
+npx skills add kylebrodeur/omp-rpc-cli          # both skills (add -g for user-global)
+```
+
+- **`using-omp-rpc`** — operate the daemon: commands, models, safety, architecture
+  (with reference files).
+- **`delegating-to-omp-rpc`** — the pattern for handing tasks to it as a
   persistent second agent.
 
 Design/protocol findings from building it: [`docs/LEARNINGS.md`](docs/LEARNINGS.md).
