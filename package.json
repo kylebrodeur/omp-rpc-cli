@@ -1,18 +1,26 @@
 {
-  "name": "pi-acp-cli",
-  "version": "0.1.0",
+  "name": "omp-rpc-cli",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Long-running Oh My Pi (omp) ACP session as a daemon, with a thin CLI to send tasks to it. Lets a driving agent (e.g. Claude Code) delegate work to a persistent pi session over the Agent Client Protocol.",
-  "keywords": ["pi", "omp", "oh-my-pi", "acp", "agent-client-protocol", "cli", "daemon", "ollama"],
+  "description": "Long-running Oh My Pi (omp) RPC session as a daemon, with a thin CLI to send tasks to it. Lets a driving agent (e.g. Claude Code) delegate work to a persistent omp session over omp's native RPC protocol.",
+  "keywords": ["pi", "omp", "oh-my-pi", "rpc", "cli", "daemon", "agent", "ollama"],
   "license": "MIT",
   "author": "Kyle Brodeur <kyle@uof.digital>",
+  "homepage": "https://github.com/kylebrodeur/omp-rpc-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kylebrodeur/omp-rpc-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kylebrodeur/omp-rpc-cli/issues"
+  },
   "bin": {
-    "pi-acp": "./bin/pi-acp.js"
+    "omp-rpc": "./bin/omp-rpc.js"
   },
   "files": ["bin/", "src/", "README.md", "LICENSE"],
   "scripts": {
-    "start": "node bin/pi-acp.js start",
-    "status": "node bin/pi-acp.js status"
+    "start": "node bin/omp-rpc.js start",
+    "status": "node bin/omp-rpc.js status"
   },
   "dependencies": {
     "commander": "^12.1.0"

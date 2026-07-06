@@ -1,76 +1,99 @@
-# Learnings — building pi-acp
+# Learnings — building omp-rpc
 
-Findings from wiring a client to `omp acp` (Oh My Pi v16.2.7) over the Agent
-Client Protocol. Most were discovered empirically by probing the live server;
-each shaped a design decision.
+Findings from wiring a client to `omp` (Oh My Pi v16.3.11). This tool began on
+`omp acp` (the generic Agent Client Protocol) and moved to omp's **native RPC
+mode** (`omp --mode rpc`/`rpc-ui`); the ACP findings that motivated the move are
+kept below. Most of this was discovered empirically by probing the live process —
+including reading command payload shapes out of the compiled `omp` binary's
+embedded JS when the docs were ambiguous.
 
-## ACP / omp protocol
+## Why RPC over ACP
 
-- **omp frames ACP as newline-delimited JSON, not LSP `Content-Length`.** The ACP
-  spec permits both; omp uses line-delimited. A client that expects header
-  framing gets nothing. → split on `\n`, parse each line (`src/client.js`).
-- **The connection is bidirectional and can deadlock.** Mid-turn, omp sends
-  server→client *requests* (`session/request_permission`, and fs reads if you
-  advertise fs capability). If you don't reply, the turn hangs forever. We
-  declare no fs capability and answer permission requests explicitly.
-- **Model is fixed at launch; there is no `session/set_model`.** Calling it
-  returns `{code:-32603, "Unknown ACP ext method: session/set_model"}`. Model is
-  set via the process flag `omp acp --model <id>`. → `pi-acp` pins model at
-  `start` and documents restart-to-switch.
-- **`session/set_mode` *is* supported** and returns `{}`. So default↔plan is
-  live-switchable on an open session even though model is not.
-- **Permission requests carry the command and typed options.** Shape:
-  `params.toolCall.kind === "execute"`, command in `toolCall.rawInput.command`;
-  `params.options[]` each have a `kind` of `allow_once`/`allow_always`/
-  `reject_once`/`reject_always`. This one message is the entire control point for
-  both autonomy (auto-approve) and the danger guard (auto-reject).
-- **`initialize` advertises real capabilities:** `loadSession`, session
-  `list`/`fork`/`resume`/`close`, MCP over http+sse, image + embedded-context
-  prompts. `session/new` returns `configOptions` (mode + a full model list).
-- **`session/close` exists** (`sessionCapabilities.close`) — used for graceful
-  shutdown before killing the child.
-- **Usage/cost stream in.** `session/update` emits `usage_update` with token size
-  and a USD cost estimate; the final `session/prompt` result carries
-  `{stopReason, usage:{inputTokens, outputTokens, cachedWriteTokens, ...}}`.
+ACP is a generic, agent-agnostic protocol; RPC is omp's own and a strict superset
+for driving it. The deciding factors:
+
+- **Live model switching.** ACP has no `session/set_model` (calling it returns
+  `Unknown ACP ext method`), so the model was pinned at launch. RPC's `set_model`
+  changes it on the running session — the headline upgrade.
+- **Turn control.** RPC adds `steer` (inject into a running turn), `follow_up`
+  (queue after it), and `abort` — none of which ACP exposed.
+- **Richer introspection.** `get_session_stats` returns sessionId, token/cost
+  totals, and live context-window usage %.
+
+Since the tool is *specifically for omp*, the omp-native protocol is the right
+substrate, and "acp" no longer belonged in the name.
+
+## omp RPC protocol
+
+- **Newline-delimited JSON over stdio, both directions.** Launch with
+  `omp --mode rpc` (headless) or `--mode rpc-ui` (adds interactive UI frames). omp
+  emits `{"type":"ready"}` when it will accept commands. `--mode json` is the
+  one-shot variant with *identical* event framing — ideal for probing.
+- **Commands carry `type` + optional `id`; acks echo `{id, type:"response",
+  command, success, data?}`** (`error` on failure). `prompt`/`steer`/`follow_up`/
+  `abort_and_prompt` all take `{message, images?}`; `abort` takes none.
+- **A prompt acks immediately, then the turn streams untagged.** The event stream
+  is *not* correlated to the command id: `agent_start` → `message_update`
+  (`assistantMessageEvent.type` ∈ `text_delta`/`thinking_delta`/`toolcall_*`) →
+  `tool_execution_start/_update/_end` → `message_end` (assistant `usage` here) →
+  `agent_end`. Resolve a prompt on the next `agent_end`; it has **no** stopReason,
+  so synthesize one. A slash-command message can ack with `{agentInvoked:false}`
+  and never start a turn — handle that or you wait forever.
+- **`set_model` matches on `{provider, modelId}`**, not a combined string
+  (`{model:"ollama/glm-5.2:cloud"}` fails with `Model not found: undefined/undefined`).
+  It matches against `get_available_models` by `provider === h.provider &&
+  id === h.modelId`. Selectors are `provider/id`; the id itself may contain slashes
+  (`huggingface/zai-org/GLM-5.2`), so split on the **first** `/` only.
+- **`--mode rpc` is fully headless — tools auto-run with no approval prompt.** This
+  is the crux for the danger guard: plain RPC gives it no hook point. Permission
+  prompts only arrive under **`--mode rpc-ui`**, as `extension_ui_request`
+  `{method:"select", title:"Allow tool: bash\nCommand: …", options:["Approve","Deny"]}`.
+  Answer with `{type:"extension_ui_response", id, value:"Approve"|"Deny"}` — the
+  option **string**, not `confirmed`/an index (answering with `confirmed:true` +
+  no `value` denies the tool). So the daemon runs `rpc-ui --approval-mode write`.
+- **`rpc-ui` also emits fire-and-forget UI frames** (`setWidget`, etc.) with ids
+  that need no response — the turn completes without answering them.
 
 ## omp models / Ollama Cloud
 
 - **The same Ollama Cloud model is exposed under TWO providers.** omp lists both
   `ollama/<id>:cloud` (the local `ollama` runtime's cloud models, e.g.
   `ollama/glm-5.2:cloud`) and `ollama-cloud/<id>` (a direct provider, e.g.
-  `ollama-cloud/glm-5.2`). Both launch and return real completions if
-  authenticated — verified by sending a prompt through each. They authenticate
-  via different paths, so pick the one your `omp`/`ollama` setup is signed into.
-  pi-acp standardizes on `ollama/*:cloud`. **Always get the exact id from
-  `omp models list --json` (`selector` field); do not hand-construct it** — the
-  suffix placement differs (`gemma4:31b-cloud` vs `gemma4:31b`).
+  `ollama-cloud/glm-5.2`). Both work if authenticated. omp-rpc standardizes on
+  `ollama/*:cloud`. **Get the exact `provider`/`id` from `get_available_models`
+  (or `omp models list --json`); do not hand-construct it** — suffix placement
+  differs (`gemma4:31b-cloud` vs `gemma4:31b`).
 - **Context windows vary widely:** glm-5.2 = 1,000,000; deepseek-v4-pro = 524,288;
   kimi-k2.7-code and gemma4:31b = 262,144. For a session that accumulates history
   across many turns, the biggest window (glm) is the safest default.
-- **Auth is inherited from `~/.omp`**, not managed by pi-acp. `start` can succeed
+- **Auth is inherited from `~/.omp`**, not managed by omp-rpc. `start` can succeed
   while `send` fails if the chosen model isn't authenticated.
 
 ## Design decisions that fell out of the above
 
 - **Daemon + Unix socket, not a one-shot pipe.** A persistent session that
   accumulates context can't be a per-call process. One detached daemon holds the
-  session; a thin `send` streams over the socket. This is the core of "a
-  long-running session you send tasks to."
+  session; a thin `send` streams over the socket.
 - **`busy` is the unit of safety.** A stateful daemon can't be killed mid-turn
-  without losing work, so we track one `busy` flag, reject concurrent `send`s, and
-  gate `stop` on it (with `--force` to override). A stateless CLI wouldn't need
-  this.
-- **Auto-approve + pattern guard, not prompt-per-tool.** Unattended delegation
-  requires approving tool use, so the safety must be a *deny*-list at the single
-  permission chokepoint rather than a human prompt.
+  without losing work, so we track one `busy` flag, reject concurrent `send`s
+  (offering `steer` instead), and gate `stop` on it (`--force` to override).
+- **Auto-approve + pattern guard via `rpc-ui`.** Unattended delegation requires
+  approving tool use, so the safety is a *deny*-list at the single approval
+  chokepoint — which is why we deliberately choose `rpc-ui` over headless `rpc`.
 - **Cleanup only touches our own files.** `stop` removes `daemon.sock/pid/json`
-  and keeps the log; it never touches the session's `--cwd`. Deleting an agent's
-  actual work would be the worst possible "cleanup".
+  and keeps the log; it never touches the session's `--cwd`.
 
 ## Gotchas for future work
 
+- **macOS caps AF_UNIX socket paths at ~104 bytes.** A long `$OMP_RPC_DIR` makes
+  `listen()` fail — and it surfaces as `EADDRINUSE`, not a length error, which is
+  a misleading trail. The default `~/.omp-rpc/daemon.sock` is safe; keep overrides
+  short.
 - **macOS has no `timeout(1)`** — don't rely on it in probes/scripts; use a Node
-  `Promise.race` timeout instead.
+  `Promise.race` timeout or a background-kill instead.
+- **The docs site is a client-rendered SPA** (`curl` gets only the shell). When
+  omp's RPC payload shapes were ambiguous, `strings` on the compiled binary +
+  grepping for the command's `case` label revealed the exact destructuring.
 - **`new Date()`/`Date.now()` are fine in the daemon** (plain Node process); they
   are only forbidden inside Workflow scripts.
 - **Non-interactive `stop` must not prompt.** Agent callers have no TTY; `confirm`

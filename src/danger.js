@@ -1,9 +1,10 @@
 // Dangerous-command guard for the auto-approving daemon.
 //
-// The daemon approves permission requests unattended, so a delegated task could
-// otherwise run a destructive shell command. `classifyCommand` inspects the
-// command string and returns "block" for clearly destructive operations. The
-// daemon then selects a `reject_*` option instead of allowing.
+// The daemon runs omp in `--mode rpc-ui --approval-mode write`, so every
+// mutating tool (bash, file writes) surfaces an `extension_ui_request` of
+// method "select" that the daemon must answer "Approve"/"Deny" unattended.
+// `classifyCommand` inspects the command string and returns "block" for clearly
+// destructive operations; the daemon then answers "Deny" instead of "Approve".
 //
 // This is a safety net, not a sandbox: it targets high-blast-radius mistakes
 // (wiping the disk, fork bombs, piping the internet into a shell), not every
@@ -41,9 +42,22 @@ export function classifyCommand(command) {
   return { action: "allow" };
 }
 
-// Pull the runnable command text out of an ACP permission request's toolCall.
-export function extractCommand(toolCall) {
-  if (!toolCall) return null;
-  const raw = toolCall.rawInput || {};
-  return raw.command || raw.cmd || raw.script || toolCall.title || null;
+// Parse an rpc-ui tool-approval prompt. omp phrases these as a `select` whose
+// title looks like:
+//
+//   Allow tool: bash
+//   Command: rm -rf /
+//
+// Returns { tool, command }. `command` is null for non-shell tools (writes,
+// edits, …) which carry no runnable command line — those are always allowed.
+export function parseApproval(title) {
+  if (!title || typeof title !== "string") return { tool: null, command: null };
+  const tool = title.match(/Allow tool:\s*([^\n]+)/i)?.[1]?.trim() || null;
+  const command = title.match(/Command:\s*([\s\S]+)$/i)?.[1]?.trim() || null;
+  return { tool, command };
+}
+
+// True for tools whose approval carries a shell command worth classifying.
+export function isShellTool(tool) {
+  return /^(bash|shell|sh|execute|exec|pty|run)$/i.test(tool || "");
 }

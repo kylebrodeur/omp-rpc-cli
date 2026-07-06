@@ -1,9 +1,10 @@
-// pi-acp daemon: holds ONE long-running omp ACP session open and serves tasks
-// over a Unix domain socket. Started detached by `pi-acp start`.
+// omp-rpc daemon: holds ONE long-running `omp --mode rpc-ui` session open and
+// serves tasks over a Unix domain socket. Started detached by `omp-rpc start`.
 //
 // Wire protocol (newline-delimited JSON, both directions):
 //   client -> daemon:  {cmd:"prompt", text}
-//                      {cmd:"mode", mode:"default"|"plan"}
+//                      {cmd:"steer", text} | {cmd:"abort"}
+//                      {cmd:"model", provider, modelId}
 //                      {cmd:"status"} | {cmd:"stop"}
 //   daemon -> client:  {type:"thought"|"chunk", text}
 //                      {type:"tool", title, status}
@@ -11,12 +12,11 @@
 //                      {type:"status", ...} | {type:"error", message}
 import net from "node:net";
 import fs from "node:fs";
-import { AcpClient } from "./client.js";
+import { RpcClient } from "./client.js";
 import { SOCK_PATH, PID_PATH, META_PATH, LOG_PATH, RUNTIME_DIR } from "./config.js";
 
-const model = process.env.PI_ACP_MODEL || null;
-const cwd = process.env.PI_ACP_CWD || process.cwd();
-const startMode = process.env.PI_ACP_MODE || "default";
+const model = process.env.OMP_RPC_MODEL || null;
+const cwd = process.env.OMP_RPC_CWD || process.cwd();
 
 fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 const log = (m) => fs.appendFileSync(LOG_PATH, `[${isoNow()}] ${m}\n`);
@@ -29,7 +29,7 @@ let turns = 0;
 const startedAt = isoNow();
 let busy = false;
 
-const client = new AcpClient({ model, cwd });
+const client = new RpcClient({ model, cwd });
 client.on("stderr", (s) => log("omp-stderr: " + s.trimEnd()));
 client.on("exit", ({ code, sig }) => {
   log(`omp exited code=${code} sig=${sig}; shutting down daemon`);
@@ -43,15 +43,8 @@ client.on("permission", ({ action, why, command, chose }) => {
 
 async function boot() {
   const init = await client.start();
-  log(`connected: ${init.agentInfo?.name} v${init.agentInfo?.version}`);
-  const s = await client.newSession({ cwd });
-  const activeModel = s.configOptions?.find((o) => o.id === "model")?.currentValue;
-  log(`session ${s.sessionId} model=${activeModel} cwd=${cwd}`);
-  if (startMode && startMode !== "default") {
-    await client.setMode(startMode);
-    log(`mode set -> ${startMode}`);
-  }
-  writeMeta({ activeModel });
+  log(`connected: omp rpc session ${init.sessionId} model=${init.model} cwd=${cwd}`);
+  writeMeta({ activeModel: init.model });
   serve();
 }
 
@@ -64,7 +57,6 @@ function writeMeta(extra = {}) {
         sessionId: client.sessionId,
         model: model || "(default)",
         cwd,
-        mode: startMode,
         startedAt,
         turns,
         sock: SOCK_PATH,
@@ -117,13 +109,35 @@ function handleConn(conn) {
 async function dispatch(req, write, conn) {
   switch (req.cmd) {
     case "status":
-      write({ type: "status", pid: process.pid, model: model || "(default)", cwd, mode: startMode, sessionId: client.sessionId, startedAt, turns, busy });
+      write({ type: "status", pid: process.pid, model: client.activeModel || model || "(default)", cwd, sessionId: client.sessionId, startedAt, turns, busy });
       conn.end();
       return;
-    case "mode":
+    case "model":
       try {
-        await client.setMode(req.mode);
-        write({ type: "status", mode: req.mode });
+        const m = await client.setModel({ provider: req.provider, modelId: req.modelId });
+        const label = m?.provider && m?.id ? `${m.provider}/${m.id}` : client.activeModel;
+        writeMeta({ activeModel: label });
+        log(`model switched -> ${label}`);
+        write({ type: "status", model: label });
+      } catch (e) {
+        write({ type: "error", message: e.message });
+      }
+      conn.end();
+      return;
+    case "steer":
+      try {
+        if (!busy) throw new Error("no turn in progress to steer into");
+        await client.steer(req.text);
+        write({ type: "status", steered: true });
+      } catch (e) {
+        write({ type: "error", message: e.message });
+      }
+      conn.end();
+      return;
+    case "abort":
+      try {
+        await client.abort();
+        write({ type: "status", aborted: true });
       } catch (e) {
         write({ type: "error", message: e.message });
       }
@@ -137,14 +151,14 @@ async function dispatch(req, write, conn) {
       return;
     case "prompt": {
       if (busy) {
-        write({ type: "error", message: "session busy with another task; try again shortly" });
+        write({ type: "error", message: "session busy with another task; try again shortly (or use `omp-rpc steer`)" });
         conn.end();
         return;
       }
       busy = true;
       const onChunk = (t) => write({ type: "chunk", text: t });
       const onThought = (t) => write({ type: "thought", text: t });
-      const onTool = (u) => write({ type: "tool", title: u.title || u.rawInput?.command || u.toolCallId, status: u.status });
+      const onTool = (u) => write({ type: "tool", title: u.title || u.toolName || u.toolCallId, status: u.status });
       client.on("tool", onTool);
       try {
         log(`turn ${turns + 1}: ${JSON.stringify(req.text).slice(0, 160)}`);
@@ -177,7 +191,7 @@ function cleanup() {
 }
 
 let shuttingDown = false;
-// Single graceful-shutdown path: close the ACP session, remove runtime files,
+// Single graceful-shutdown path: close the RPC session, remove runtime files,
 // then exit. Idempotent — safe to call from stop, signals, or errors.
 async function shutdown(code) {
   if (shuttingDown) return;

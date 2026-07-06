@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pi-acp — drive a long-running Oh My Pi (omp) ACP session from the shell.
+// omp-rpc — drive a long-running Oh My Pi (omp) RPC session from the shell.
 import { Command } from "commander";
 import net from "node:net";
 import fs from "node:fs";
@@ -15,6 +15,7 @@ import {
   RUNTIME_DIR,
   MODEL_ALIASES,
   resolveModel,
+  splitModel,
   DEFAULT_MODEL,
 } from "../src/config.js";
 
@@ -23,9 +24,9 @@ const DAEMON = join(__dirname, "..", "src", "daemon.js");
 
 const program = new Command();
 program
-  .name("pi-acp")
-  .description("Long-running omp ACP session you can send tasks to")
-  .version("0.1.0");
+  .name("omp-rpc")
+  .description("Long-running omp RPC session you can send tasks to")
+  .version("0.2.0");
 
 // --- helpers -------------------------------------------------------------
 
@@ -102,13 +103,12 @@ function confirm(question, assumeYes) {
 
 program
   .command("start")
-  .description("Start the background daemon holding an omp ACP session open")
-  .option("-m, --model <model>", `model alias or omp id (aliases: ${Object.keys(MODEL_ALIASES).join(", ")})`)
+  .description("Start the background daemon holding an omp RPC session open")
+  .option("-m, --model <model>", `model alias or omp selector (aliases: ${Object.keys(MODEL_ALIASES).join(", ")})`)
   .option("-c, --cwd <dir>", "working directory for the omp session", process.cwd())
-  .option("--mode <mode>", "session mode: default | plan", "default")
   .action(async (opts) => {
     const running = isRunning();
-    if (running) die(`already running (pid ${running}). Use 'pi-acp stop' first.`);
+    if (running) die(`already running (pid ${running}). Use 'omp-rpc stop' first.`);
     cleanStaleFiles(); // clear leftovers from a previously-crashed daemon
 
     const model = resolveModel(opts.model);
@@ -119,9 +119,8 @@ program
       stdio: ["ignore", out, out],
       env: {
         ...process.env,
-        PI_ACP_MODEL: model,
-        PI_ACP_CWD: opts.cwd,
-        PI_ACP_MODE: opts.mode,
+        OMP_RPC_MODEL: model,
+        OMP_RPC_CWD: opts.cwd,
       },
     });
     child.unref();
@@ -135,11 +134,10 @@ program
         try {
           const events = await request({ cmd: "status" });
           const s = events.find((e) => e.type === "status");
-          console.log("\n✓ pi-acp running");
+          console.log("\n✓ omp-rpc running");
           console.log(`  pid:     ${s.pid}`);
           console.log(`  model:   ${model}`);
           console.log(`  cwd:     ${opts.cwd}`);
-          console.log(`  mode:    ${opts.mode}`);
           console.log(`  session: ${s.sessionId}`);
           console.log(`  socket:  ${SOCK_PATH}`);
           return;
@@ -148,7 +146,7 @@ program
         }
       }
     }
-    die("\n✗ daemon did not come up in time — check logs: pi-acp logs");
+    die("\n✗ daemon did not come up in time — check logs: omp-rpc logs");
   });
 
 program
@@ -157,12 +155,12 @@ program
   .option("-q, --quiet", "suppress thoughts/tool events; print only the reply")
   .option("--json", "print the raw done event as JSON")
   .action(async (taskWords, opts) => {
-    if (!isRunning()) die("not running. Start it with: pi-acp start");
+    if (!isRunning()) die("not running. Start it with: omp-rpc start");
     let text = (taskWords || []).join(" ").trim();
     if (!text && !process.stdin.isTTY) {
       text = fs.readFileSync(0, "utf8").trim();
     }
-    if (!text) die("no task given. Usage: pi-acp send \"your task\"");
+    if (!text) die('no task given. Usage: omp-rpc send "your task"');
 
     let done, errored;
     const dim = (s) => `\x1b[2m${s}\x1b[0m`;
@@ -190,6 +188,39 @@ program
   });
 
 program
+  .command("steer <text...>")
+  .description("Inject a message into the turn currently running")
+  .action(async (words) => {
+    if (!isRunning()) die("not running.");
+    const events = await request({ cmd: "steer", text: words.join(" ") });
+    const err = events.find((e) => e.type === "error");
+    if (err) die(`✗ ${err.message}`);
+    console.log("steered");
+  });
+
+program
+  .command("abort")
+  .description("Interrupt the turn currently running")
+  .action(async () => {
+    if (!isRunning()) die("not running.");
+    await request({ cmd: "abort" });
+    console.log("aborted");
+  });
+
+program
+  .command("model <model>")
+  .description("Switch the live session model (alias or omp selector)")
+  .action(async (input) => {
+    if (!isRunning()) die("not running.");
+    const { provider, modelId } = splitModel(input);
+    const events = await request({ cmd: "model", provider, modelId });
+    const err = events.find((e) => e.type === "error");
+    if (err) die(`✗ ${err.message}`);
+    const s = events.find((e) => e.type === "status") || {};
+    console.log(`model -> ${s.model || resolveModel(input)}`);
+  });
+
+program
   .command("status")
   .description("Show the running session's status")
   .action(async () => {
@@ -204,20 +235,10 @@ program
     console.log(`  pid:     ${s.pid}`);
     console.log(`  model:   ${meta.activeModel || s.model}`);
     console.log(`  cwd:     ${s.cwd}`);
-    console.log(`  mode:    ${s.mode}`);
     console.log(`  session: ${s.sessionId}`);
     console.log(`  turns:   ${s.turns}`);
     console.log(`  busy:    ${s.busy}`);
     console.log(`  started: ${s.startedAt}`);
-  });
-
-program
-  .command("mode <mode>")
-  .description("Switch the live session mode (default | plan)")
-  .action(async (mode) => {
-    if (!isRunning()) die("not running.");
-    await request({ cmd: "mode", mode });
-    console.log(`mode -> ${mode}`);
   });
 
 program
@@ -238,10 +259,10 @@ program
     const events = await request({ cmd: "status" }).catch(() => []);
     const s = events.find((e) => e.type === "status") || {};
     if (s.busy && !opts.force) {
-      die(`✗ session is busy running a task (turn ${s.turns + 1}). Wait for it to finish, or use: pi-acp stop --force`);
+      die(`✗ session is busy running a task (turn ${s.turns + 1}). Wait for it to finish, or use: omp-rpc stop --force`);
     }
 
-    // pi-acp only ever removes its OWN runtime files. The session's working
+    // omp-rpc only ever removes its OWN runtime files. The session's working
     // directory and any files the agent created/edited there are left untouched.
     console.log("This will close the omp session and remove runtime files:");
     console.log(`  ${SOCK_PATH}`);
@@ -285,11 +306,11 @@ program
   .command("models")
   .description("List the built-in model aliases")
   .action(() => {
-    console.log("aliases (use with --model):\n");
+    console.log("aliases (use with --model or `omp-rpc model`):\n");
     for (const [k, v] of Object.entries(MODEL_ALIASES)) {
       console.log(`  ${k.padEnd(9)} → ${v}${v === DEFAULT_MODEL ? "   (default)" : ""}`);
     }
-    console.log("\nany raw omp id also works, e.g. --model anthropic/claude-opus-4-8");
+    console.log("\nany raw omp selector also works, e.g. `omp-rpc model anthropic/claude-opus-4-8`");
     console.log("full list: omp models list");
   });
 
