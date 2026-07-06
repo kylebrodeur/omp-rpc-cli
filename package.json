@@ -1,6 +1,6 @@
 {
   "name": "omp-rpc-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Long-running Oh My Pi (omp) RPC session as a daemon, with a thin CLI to send tasks to it. Lets a driving agent (e.g. Claude Code) delegate work to a persistent omp session over omp's native RPC protocol.",
   "keywords": ["pi", "omp", "oh-my-pi", "rpc", "cli", "daemon", "agent", "ollama"],

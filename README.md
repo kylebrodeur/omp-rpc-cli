@@ -1,6 +1,6 @@
 # omp-rpc
 
-A **long-running [Oh My Pi](https://github.com/) (`omp`) session** you can send
+A **long-running [Oh My Pi](https://omp.sh) (`omp`) session** you can send
 tasks to from the shell — a persistent second coding agent that a driver (you, or
 Claude Code) can delegate work to and check back on.
 
@@ -15,13 +15,33 @@ accumulates across tasks** — you can build on earlier work.
 > allows **switching models live**, which ACP could not. See
 > [`docs/LEARNINGS.md`](docs/LEARNINGS.md).
 
-## Install
+## Using with Claude Code
 
-```sh
-npm  install -g omp-rpc-cli     # or: pnpm add -g omp-rpc-cli
-```
+First make sure [`omp`](https://omp.sh/docs) is installed and authenticated (its
+docs cover setup). Then:
 
-This puts `omp-rpc` on your PATH. Requires `omp` on your PATH and Node ≥ 20.
+1. **Install the CLI** — puts `omp-rpc` on your PATH (needs Node ≥ 20):
+
+   ```sh
+   npm install -g omp-rpc-cli     # or: pnpm add -g omp-rpc-cli
+   ```
+
+2. **Add the skills to Claude Code** — teaches it how to drive `omp-rpc`:
+
+   ```sh
+   npx skills add kylebrodeur/omp-rpc-cli -g
+   ```
+
+   - **`delegating-to-omp-rpc`** — when and how to hand work off to it.
+   - **`using-omp-rpc`** — the daemon mechanics (commands, models, safety).
+
+Now just ask Claude Code in plain language, e.g.:
+
+> *"Start an omp-rpc session on this repo and delegate writing the migration
+> script to it, then review what it produced."*
+
+Claude handles the `start` / `send` / `stop` lifecycle via the skills. You can
+also drive it yourself with the CLI:
 
 ## Use
 
@@ -105,19 +125,11 @@ Because the daemon approves tool use unattended, two guardrails apply:
 - `bin/omp-rpc.js` — the CLI.
 - `src/danger.js` — dangerous-command guard patterns.
 
-## Skills for driving agents
+## Skills & docs
 
-This repo ships two [agent skills](https://github.com/vercel-labs/skills) that
-teach a driving agent (Claude Code, etc.) how to use `omp-rpc`. Install them
-straight from the repo with the `skills` CLI:
-
-```sh
-npx skills add kylebrodeur/omp-rpc-cli          # both skills (add -g for user-global)
-```
-
-- **`using-omp-rpc`** — operate the daemon: commands, models, safety, architecture
-  (with reference files).
-- **`delegating-to-omp-rpc`** — the pattern for handing tasks to it as a
-  persistent second agent.
+The two [agent skills](https://github.com/vercel-labs/skills) that drive this tool
+(`using-omp-rpc`, `delegating-to-omp-rpc`) install via `npx skills add
+kylebrodeur/omp-rpc-cli` — see [Using with Claude Code](#using-with-claude-code).
+Their source lives in [`skills/`](skills/).
 
 Design/protocol findings from building it: [`docs/LEARNINGS.md`](docs/LEARNINGS.md).
