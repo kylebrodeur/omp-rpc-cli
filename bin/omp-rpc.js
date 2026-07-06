@@ -26,7 +26,7 @@ const program = new Command();
 program
   .name("omp-rpc")
   .description("Long-running omp RPC session you can send tasks to")
-  .version("0.2.0");
+  .version("0.2.1");
 
 // --- helpers -------------------------------------------------------------
 
