@@ -217,18 +217,35 @@ export class RpcClient extends EventEmitter {
     const { id, method } = msg;
     if (method === "select") {
       const opts = msg.options || [];
+      const denyOpt = opts.find((o) => /deny|reject|\bno\b|cancel/i.test(String(o)));
+      const allowOpt = opts.find((o) => /approve|allow|\byes\b|accept/i.test(String(o)));
       const { tool, command } = parseApproval(msg.title || "");
-      const isApproval = /Allow tool:/i.test(msg.title || "");
+      // Treat as an approval if omp labels it so, OR if it's a two-way
+      // approve/deny select we didn't recognize by title (format drift).
+      const isApproval = /Allow tool:/i.test(msg.title || "") || (allowOpt && denyOpt);
       if (isApproval) {
-        // Guard: block clearly destructive shell commands even unattended.
-        const verdict = isShellTool(tool) ? classifyCommand(command) : { action: "allow" };
-        const want = verdict.action === "block" ? /deny|reject|no/i : /approve|allow|yes|accept/i;
-        const pick = opts.find((o) => want.test(String(o))) || opts[verdict.action === "block" ? opts.length - 1 : 0];
+        // The guard reads the tool/command out of omp's human-readable title —
+        // the only channel omp's `select` exposes (no structured fields). So it
+        // FAILS CLOSED: any approval we can't fully parse is denied and logged,
+        // rather than silently approved, so title-format drift is visible.
+        let verdict;
+        if (isShellTool(tool)) {
+          verdict = command
+            ? classifyCommand(command)
+            : { action: "block", why: "shell approval with no parseable command (guard read failed)" };
+        } else if (tool) {
+          verdict = { action: "allow" }; // non-shell tool (write/edit/…): cwd-scoped, allowed
+        } else {
+          verdict = { action: "block", why: "unrecognized approval prompt (guard could not parse the tool)" };
+        }
+        const pick = verdict.action === "block" ? denyOpt || opts[opts.length - 1] : allowOpt || opts[0];
         this.emit("permission", { tool, command, action: verdict.action, why: verdict.why, chose: pick });
         this._respondUi(id, { value: pick });
         return;
       }
-      // Unknown selector while unattended: take the first option.
+      // A genuinely non-approval select (no approve/deny options). Default to the
+      // first option, but surface it so unexpected prompts aren't silently chosen.
+      this.emit("notify", { unhandledSelect: msg.title, options: opts });
       this._respondUi(id, { value: opts[0] });
       return;
     }

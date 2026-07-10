@@ -109,7 +109,11 @@ Because the daemon approves tool use unattended, two guardrails apply:
   `mkfs`, `dd` to a raw disk, `shred`/`wipe`, fork bombs, `curl|wget … | sh`,
   recursive `chmod`/`chown` on `/`, `shutdown`/`reboot`, destructive
   `git clean/reset`. A match is answered **"Deny"** (logged as `BLOCKED …`) and the
-  agent is told no; everything else is approved. It's a blast-radius net, not a
+  agent is told no; safe shell commands and non-shell tools (write/edit, scoped to
+  `--cwd`) are approved. The guard reads the tool/command out of omp's
+  human-readable approval title — the only channel `select` exposes — so it **fails
+  closed**: any approval it can't fully parse (e.g. omp reworded the prompt) is
+  denied and logged, never silently approved. It's a blast-radius net, not a
   sandbox — tune the patterns to taste.
 - **Safe stop / cleanup.** `omp-rpc stop` refuses to tear down a session that's
   **mid-task** (use `--force` to override), lists exactly which runtime files it

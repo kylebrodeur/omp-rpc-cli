@@ -26,7 +26,7 @@ const program = new Command();
 program
   .name("omp-rpc")
   .description("Long-running omp RPC session you can send tasks to")
-  .version("0.2.2");
+  .version("0.2.3");
 
 // --- helpers -------------------------------------------------------------
 
@@ -177,6 +177,9 @@ program
       },
     );
     if (errored) die(`\n✗ ${errored}`);
+    // No `done` and no `error` means the socket closed mid-turn (daemon crash,
+    // omp exit). Fail loudly so scripted callers don't read it as success.
+    if (!done) die("\n✗ session closed before the turn completed — check: omp-rpc logs");
     if (opts.json) {
       console.log("\n" + JSON.stringify(done, null, 2));
     } else if (done && !opts.quiet) {

@@ -7,7 +7,7 @@ description: Use when you need to run, operate, or troubleshoot the omp-rpc daem
 
 ## Overview
 
-`omp-rpc` keeps **one long-running [Oh My Pi](https://github.com/) (`omp`) session**
+`omp-rpc` keeps **one long-running [Oh My Pi](https://omp.sh) (`omp`) session**
 open and lets you send it tasks from the shell. A background **daemon** holds an
 omp [RPC](https://omp.sh/docs/rpc) session (newline-delimited JSON over stdio);
 a thin **`send`** command forwards each task over a Unix socket and streams the
