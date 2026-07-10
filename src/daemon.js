@@ -13,10 +13,15 @@
 import net from "node:net";
 import fs from "node:fs";
 import { RpcClient } from "./client.js";
-import { SOCK_PATH, PID_PATH, META_PATH, LOG_PATH, RUNTIME_DIR } from "./config.js";
+import { SOCK_PATH, PID_PATH, META_PATH, LOG_PATH, RUNTIME_DIR, splitModel } from "./config.js";
 
 const model = process.env.OMP_RPC_MODEL || null;
 const cwd = process.env.OMP_RPC_CWD || process.cwd();
+// Exact selectors this session may switch among. Empty = unscoped (any model).
+const scope = (process.env.OMP_RPC_MODELS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 const log = (m) => fs.appendFileSync(LOG_PATH, `[${isoNow()}] ${m}\n`);
@@ -29,7 +34,7 @@ let turns = 0;
 const startedAt = isoNow();
 let busy = false;
 
-const client = new RpcClient({ model, cwd });
+const client = new RpcClient({ model, cwd, scope });
 client.on("stderr", (s) => log("omp-stderr: " + s.trimEnd()));
 client.on("exit", ({ code, sig }) => {
   log(`omp exited code=${code} sig=${sig}; shutting down daemon`);
@@ -56,6 +61,7 @@ function writeMeta(extra = {}) {
         pid: process.pid,
         sessionId: client.sessionId,
         model: model || "(default)",
+        scope,
         cwd,
         startedAt,
         turns,
@@ -109,13 +115,23 @@ function handleConn(conn) {
 async function dispatch(req, write, conn) {
   switch (req.cmd) {
     case "status":
-      write({ type: "status", pid: process.pid, model: client.activeModel || model || "(default)", cwd, sessionId: client.sessionId, startedAt, turns, busy });
+      write({ type: "status", pid: process.pid, model: client.activeModel || model || "(default)", scope, cwd, sessionId: client.sessionId, startedAt, turns, busy });
       conn.end();
       return;
-    case "model":
+    case "model": {
+      // The CLI sends an already-resolved exact selector. The daemon is the scope
+      // gate: reject anything outside the session's allowed set (omp's own
+      // --models only scopes TUI cycling, not RPC set_model — so we enforce here).
+      const selector = req.selector;
+      if (scope.length && !scope.includes(selector)) {
+        write({ type: "error", message: `"${selector}" is not in this session's scope:\n  ${scope.join("\n  ")}` });
+        conn.end();
+        return;
+      }
       try {
-        const m = await client.setModel({ provider: req.provider, modelId: req.modelId });
-        const label = m?.provider && m?.id ? `${m.provider}/${m.id}` : client.activeModel;
+        const { provider, modelId } = splitModel(selector);
+        const m = await client.setModel({ provider, modelId });
+        const label = m?.provider && m?.id ? `${m.provider}/${m.id}` : selector;
         writeMeta({ activeModel: label });
         log(`model switched -> ${label}`);
         write({ type: "status", model: label });
@@ -124,6 +140,7 @@ async function dispatch(req, write, conn) {
       }
       conn.end();
       return;
+    }
     case "steer":
       try {
         if (!busy) throw new Error("no turn in progress to steer into");

@@ -19,7 +19,10 @@ omp --mode rpc-ui   (the Oh My Pi agent, one persistent RPC session)
 - `src/daemon.js` — owns the `RpcClient`, holds one session, serves tasks over the
   socket, tracks `busy`/`turns`, writes `daemon.json` metadata.
 - `src/client.js` — `RpcClient`, a reusable omp-RPC-over-stdio client (importable).
-- `src/config.js` — paths + model aliases + `splitModel`. `src/danger.js` — guard.
+- `src/config.js` — runtime paths + `splitModel`. `src/danger.js` — command guard.
+- `src/models.js` — live catalog access + exact selector resolution (no aliases).
+- `src/presets.js` — named scope presets (`~/.omp-rpc/presets.json`).
+- `src/picker.js` — clack TUI multi-select for choosing a scope (human path).
 
 ## omp RPC transport (client ↔ omp)
 

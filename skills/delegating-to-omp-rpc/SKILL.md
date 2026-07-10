@@ -29,7 +29,8 @@ you can just do.
 
 ```sh
 omp-rpc status                                   # running? busy?
-omp-rpc start --model glm --cwd /path/to/repo    # if stopped — point cwd at the work
+omp-rpc models --json                            # discover exact selectors (never guess them)
+omp-rpc start --models "<sel>,<sel>" --model <sel> --cwd /path/to/repo  # scope + active
 omp-rpc send "Task 1 — <clear, self-contained instruction>"
 omp-rpc send "Task 2 — builds on task 1"         # context carries over
 # ...review each streamed reply, correct course as needed...
@@ -47,9 +48,14 @@ omp-rpc stop                                     # when the whole job is done
 - **Steer instead of waiting** when a running turn is going the wrong way:
   `omp-rpc steer "actually, skip the tests dir"` injects mid-turn; `omp-rpc abort`
   cancels it outright.
-- **Match the model to the task, live.** Start on `glm` for a big-context session,
-  drop to `kimi` for a focused coding turn with `omp-rpc model kimi` — no restart,
-  the accumulated context is preserved.
+- **Discover models, don't recall them.** Selectors live in omp's catalog and
+  change over time — run `omp-rpc models --json` and copy exact selectors; never
+  invent a selector from memory.
+- **Match the model to the task, live.** Scope the session to a few models at
+  `start` (`--models`), then switch among them per turn — a big-context model for
+  a sprawling session, a coding-tuned one for a focused turn — with
+  `omp-rpc model <sel>`. No restart; the accumulated context is preserved. Switches
+  are limited to the session's scope.
 - **Capture cleanly** when you'll parse the output: `omp-rpc send -q "..."` sends
   the answer to stdout and thoughts/tools to stderr. `--json` gives
   `{stopReason, usage}`.

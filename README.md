@@ -46,9 +46,13 @@ also drive it yourself with the CLI:
 ## Use
 
 ```sh
-omp-rpc start                       # boot the daemon (default model: glm, 1M ctx)
-omp-rpc start --model kimi          # coding-tuned kimi-k2.7-code
-omp-rpc start --cwd ~/repo
+omp-rpc models                      # browse the live catalog (source of selectors)
+omp-rpc models --json               # machine-readable (the agent path)
+omp-rpc pick                        # interactive multi-select → start / save / print
+
+omp-rpc start --models "ollama/glm-5.2:cloud,ollama/kimi-k2.7-code:cloud" \
+              --model ollama/glm-5.2:cloud --cwd ~/repo   # scope + active model
+omp-rpc start --preset coding       # boot from a saved preset
 
 omp-rpc send "Summarize what this repo does"
 omp-rpc send "Now add a health check to server.js"   # remembers the last turn
@@ -56,30 +60,35 @@ echo "review the diff" | omp-rpc send                # reads stdin
 omp-rpc send --quiet "..."          # reply only (no thoughts/tools on stderr)
 omp-rpc send --json  "..."          # raw {stopReason, usage}
 
-omp-rpc model kimi                  # switch the model live — no restart
+omp-rpc model ollama/kimi-k2.7-code:cloud  # switch live — within scope, no restart
 omp-rpc steer "skip the tests dir"  # inject into the turn currently running
 omp-rpc abort                       # interrupt the running turn
 
-omp-rpc status                      # pid, model, session id, turn count, busy?
+omp-rpc status                      # pid, model, scope, session id, turns, busy?
 omp-rpc logs -n 60                  # daemon log
 omp-rpc stop                        # close session + clean up (see Safety)
 omp-rpc stop --force                # stop even mid-task; -y skips the prompt
-omp-rpc models                      # built-in aliases
+omp-rpc presets                     # list saved presets (`presets rm <name>` deletes)
 ```
 
-### Model aliases
+### Choosing models — no hardcoded aliases
 
-| alias | omp selector | context |
-|-------|--------------|---------|
-| `glm` (default) | `ollama/glm-5.2:cloud` | 1,000,000 |
-| `kimi` | `ollama/kimi-k2.7-code:cloud` | 262,144 |
-| `deepseek` | `ollama/deepseek-v4-pro:cloud` | 524,288 |
-| `gemma` | `ollama/gemma4:31b-cloud` | 262,144 |
+Selectors come from **omp's live catalog**, not a baked-in alias table, so
+newly-added models are always available and nothing goes stale. Discover them,
+then pass exact selectors:
 
-Any raw omp selector also works: `--model anthropic/claude-opus-4-8`, or live via
-`omp-rpc model anthropic/claude-opus-4-8`. Confirm exact ids with
-`omp models list --json` (the `selector` field). omp also exposes the same models
-under an `ollama-cloud/<id>` provider; either works if authenticated.
+```sh
+omp-rpc models --json     # [{provider,id,selector,name,contextWindow}] — copy `selector`
+omp-rpc models glm        # human-readable, filtered by substring
+```
+
+A **selector** is `provider/id` (e.g. `ollama/glm-5.2:cloud`,
+`anthropic/claude-opus-4-8`). A partial/ambiguous name like `glm` is **rejected**
+with a candidate list — pick an exact one, or run `omp-rpc pick` for an
+interactive multi-select. `--models` scopes the session to a set; `--model`
+chooses which is active; `omp-rpc model <sel>` switches live but only within that
+scope. Save a chosen scope with a preset (`omp-rpc pick --save <name>`) and reuse
+it via `omp-rpc start --preset <name>`.
 
 ## How it works
 
@@ -125,8 +134,10 @@ Because the daemon approves tool use unattended, two guardrails apply:
 ## Files
 
 - `src/client.js` — reusable `RpcClient` (importable omp-RPC-over-stdio client).
-- `src/daemon.js` — holds the session, serves tasks over the socket.
+- `src/daemon.js` — holds the session, serves tasks over the socket, enforces scope.
 - `bin/omp-rpc.js` — the CLI.
+- `src/models.js` — live catalog access + exact selector resolution.
+- `src/presets.js` — named scope presets. `src/picker.js` — clack scope picker.
 - `src/danger.js` — dangerous-command guard patterns.
 
 ## Skills & docs

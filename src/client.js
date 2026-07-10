@@ -20,9 +20,10 @@ import { EventEmitter } from "node:events";
 import { classifyCommand, parseApproval, isShellTool } from "./danger.js";
 
 export class RpcClient extends EventEmitter {
-  constructor({ model, cwd } = {}) {
+  constructor({ model, cwd, scope } = {}) {
     super();
     this.model = model; // full "provider/id" selector, or null for omp's default
+    this.scope = Array.isArray(scope) ? scope.filter(Boolean) : []; // allowed selectors
     this.cwd = cwd || process.cwd();
     this.child = null;
     this.nextId = 1;
@@ -38,6 +39,9 @@ export class RpcClient extends EventEmitter {
   async start() {
     const argv = ["--mode", "rpc-ui", "--approval-mode", "write"];
     if (this.model) argv.push("--model", this.model);
+    // Pass the scope to omp too. This only affects omp's own TUI cycling (not
+    // RPC set_model, which we gate in the daemon), but keeps omp's view aligned.
+    if (this.scope.length) argv.push("--models", this.scope.join(","));
     argv.push("--cwd", this.cwd);
     this.child = spawn("omp", argv, { stdio: ["pipe", "pipe", "pipe"], cwd: this.cwd });
     this.child.stdout.on("data", (c) => this._onData(c));

@@ -7,17 +7,10 @@ import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import {
-  SOCK_PATH,
-  PID_PATH,
-  META_PATH,
-  LOG_PATH,
-  RUNTIME_DIR,
-  MODEL_ALIASES,
-  resolveModel,
-  splitModel,
-  DEFAULT_MODEL,
-} from "../src/config.js";
+import chalk from "chalk";
+import { SOCK_PATH, PID_PATH, META_PATH, LOG_PATH, RUNTIME_DIR, splitModel } from "../src/config.js";
+import { loadCatalog, findExact, resolveScope, ModelResolveError } from "../src/models.js";
+import * as presets from "../src/presets.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DAEMON = join(__dirname, "..", "src", "daemon.js");
@@ -26,7 +19,7 @@ const program = new Command();
 program
   .name("omp-rpc")
   .description("Long-running omp RPC session you can send tasks to")
-  .version("0.2.3");
+  .version("0.3.0");
 
 // --- helpers -------------------------------------------------------------
 
@@ -99,54 +92,97 @@ function confirm(question, assumeYes) {
   });
 }
 
+// Resolve the session's scope + active model from start options, honoring
+// precedence: explicit flags → preset → interactive picker (TTY) → omp default.
+// Returns { scope: string[], active: string|null }. Throws ModelResolveError on
+// a bad flag; the caller turns that into a friendly die().
+async function resolveStartScope(opts) {
+  if (opts.models || opts.model) {
+    const scope = opts.models ? await resolveScope(opts.models) : [];
+    let active = opts.model ? await findExact(opts.model) : scope[0];
+    if (opts.models && !scope.includes(active)) {
+      die(`✗ --model ${active} is not in --models scope:\n  ${scope.join("\n  ")}`);
+    }
+    // --model alone locks the session to that one model (switch is disabled).
+    return { scope: scope.length ? scope : [active], active };
+  }
+  if (opts.preset) {
+    const p = presets.get(opts.preset);
+    if (!p) die(`✗ no preset named "${opts.preset}". List them: omp-rpc presets`);
+    return { scope: p.models, active: p.active };
+  }
+  if (process.stdin.isTTY) {
+    const { runPicker } = await import("../src/picker.js");
+    const picked = await runPicker(await loadCatalog());
+    if (!picked) process.exit(0); // cancelled
+    if (picked.saveAs) presets.save(picked.saveAs, { models: picked.models, active: picked.active });
+    return { scope: picked.models, active: picked.active };
+  }
+  return { scope: [], active: null }; // no TTY, no flags → omp's own default, unscoped
+}
+
+// Spawn the detached daemon with the resolved scope, wait for it to answer, and
+// print a status summary. Shared by `start` and `pick`.
+async function spawnDaemon({ active, scope, cwd }) {
+  const running = isRunning();
+  if (running) die(`already running (pid ${running}). Use 'omp-rpc stop' first.`);
+  cleanStaleFiles();
+
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  const out = fs.openSync(LOG_PATH, "a");
+  const child = spawn(process.execPath, [DAEMON], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: {
+      ...process.env,
+      OMP_RPC_MODEL: active || "",
+      OMP_RPC_MODELS: scope.join(","),
+      OMP_RPC_CWD: cwd,
+    },
+  });
+  child.unref();
+
+  process.stdout.write("starting");
+  for (let i = 0; i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    process.stdout.write(".");
+    if (isRunning()) {
+      try {
+        const events = await request({ cmd: "status" });
+        const s = events.find((e) => e.type === "status");
+        console.log("\n✓ omp-rpc running");
+        console.log(`  pid:     ${s.pid}`);
+        console.log(`  model:   ${active || "(omp default)"}`);
+        console.log(`  scope:   ${scope.length ? scope.join(", ") : "(unscoped)"}`);
+        console.log(`  cwd:     ${cwd}`);
+        console.log(`  session: ${s.sessionId}`);
+        console.log(`  socket:  ${SOCK_PATH}`);
+        return;
+      } catch {
+        /* not ready yet */
+      }
+    }
+  }
+  die("\n✗ daemon did not come up in time — check logs: omp-rpc logs");
+}
+
 // --- commands ------------------------------------------------------------
 
 program
   .command("start")
   .description("Start the background daemon holding an omp RPC session open")
-  .option("-m, --model <model>", `model alias or omp selector (aliases: ${Object.keys(MODEL_ALIASES).join(", ")})`)
+  .option("-m, --model <selector>", "active model (exact selector/id from `omp-rpc models`)")
+  .option("-M, --models <list>", "comma-separated selectors to scope the session to")
+  .option("-p, --preset <name>", "start from a saved preset (see `omp-rpc presets`)")
   .option("-c, --cwd <dir>", "working directory for the omp session", process.cwd())
   .action(async (opts) => {
-    const running = isRunning();
-    if (running) die(`already running (pid ${running}). Use 'omp-rpc stop' first.`);
-    cleanStaleFiles(); // clear leftovers from a previously-crashed daemon
-
-    const model = resolveModel(opts.model);
-    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-    const out = fs.openSync(LOG_PATH, "a");
-    const child = spawn(process.execPath, [DAEMON], {
-      detached: true,
-      stdio: ["ignore", out, out],
-      env: {
-        ...process.env,
-        OMP_RPC_MODEL: model,
-        OMP_RPC_CWD: opts.cwd,
-      },
-    });
-    child.unref();
-
-    // Wait for the socket + a status reply.
-    process.stdout.write("starting");
-    for (let i = 0; i < 100; i++) {
-      await new Promise((r) => setTimeout(r, 150));
-      process.stdout.write(".");
-      if (isRunning()) {
-        try {
-          const events = await request({ cmd: "status" });
-          const s = events.find((e) => e.type === "status");
-          console.log("\n✓ omp-rpc running");
-          console.log(`  pid:     ${s.pid}`);
-          console.log(`  model:   ${model}`);
-          console.log(`  cwd:     ${opts.cwd}`);
-          console.log(`  session: ${s.sessionId}`);
-          console.log(`  socket:  ${SOCK_PATH}`);
-          return;
-        } catch {
-          /* not ready yet */
-        }
-      }
+    try {
+      const { scope, active } = await resolveStartScope(opts);
+      await spawnDaemon({ active, scope, cwd: opts.cwd });
+    } catch (e) {
+      if (e instanceof ModelResolveError) die(`✗ ${e.message}`);
+      throw e;
     }
-    die("\n✗ daemon did not come up in time — check logs: omp-rpc logs");
   });
 
 program
@@ -211,16 +247,41 @@ program
   });
 
 program
-  .command("model <model>")
-  .description("Switch the live session model (alias or omp selector)")
+  .command("model [selector]")
+  .description("Switch the live session model within scope (no arg = pick, on a TTY)")
   .action(async (input) => {
     if (!isRunning()) die("not running.");
-    const { provider, modelId } = splitModel(input);
-    const events = await request({ cmd: "model", provider, modelId });
+
+    // Read the session scope so we resolve/pick within it.
+    const st = (await request({ cmd: "status" })).find((e) => e.type === "status") || {};
+    const scope = st.scope || [];
+
+    let selector = input;
+    if (!selector) {
+      if (!process.stdin.isTTY) die("no model given. Usage: omp-rpc model <selector>  (or run on a TTY to pick)");
+      const catalog = await loadCatalog();
+      const choices = scope.length ? catalog.filter((m) => scope.includes(m.selector)) : catalog;
+      const { runPicker } = await import("../src/picker.js");
+      const picked = await runPicker(choices, { title: "Switch active model", preselect: scope });
+      if (!picked) return;
+      selector = picked.active;
+    } else {
+      // Resolve the typed value to an exact selector against the FULL catalog,
+      // then let the daemon enforce scope — so a valid-but-out-of-scope selector
+      // gets the daemon's clear "not in this session's scope" message, not a
+      // misleading "no match".
+      try {
+        selector = await findExact(selector);
+      } catch (e) {
+        die(`✗ ${e.message}`);
+      }
+    }
+
+    const events = await request({ cmd: "model", selector });
     const err = events.find((e) => e.type === "error");
     if (err) die(`✗ ${err.message}`);
     const s = events.find((e) => e.type === "status") || {};
-    console.log(`model -> ${s.model || resolveModel(input)}`);
+    console.log(`model -> ${s.model || selector}`);
   });
 
 program
@@ -237,6 +298,7 @@ program
     console.log("● running");
     console.log(`  pid:     ${s.pid}`);
     console.log(`  model:   ${meta.activeModel || s.model}`);
+    console.log(`  scope:   ${(s.scope || []).length ? s.scope.join(", ") : "(unscoped)"}`);
     console.log(`  cwd:     ${s.cwd}`);
     console.log(`  session: ${s.sessionId}`);
     console.log(`  turns:   ${s.turns}`);
@@ -306,15 +368,75 @@ program
   });
 
 program
-  .command("models")
-  .description("List the built-in model aliases")
-  .action(() => {
-    console.log("aliases (use with --model or `omp-rpc model`):\n");
-    for (const [k, v] of Object.entries(MODEL_ALIASES)) {
-      console.log(`  ${k.padEnd(9)} → ${v}${v === DEFAULT_MODEL ? "   (default)" : ""}`);
+  .command("models [pattern]")
+  .description("Browse omp's live model catalog (the source of selectors)")
+  .option("--json", "machine-readable output (the agent path — copy exact selectors from here)")
+  .option("--refresh", "re-fetch omp's catalog first (picks up newly-added models)")
+  .action(async (pattern, opts) => {
+    let catalog = await loadCatalog({ refresh: opts.refresh });
+    if (pattern) {
+      const q = pattern.toLowerCase();
+      catalog = catalog.filter((m) => [m.selector, m.id, m.name].some((f) => String(f).toLowerCase().includes(q)));
     }
-    console.log("\nany raw omp selector also works, e.g. `omp-rpc model anthropic/claude-opus-4-8`");
-    console.log("full list: omp models list");
+    if (opts.json) {
+      console.log(JSON.stringify(catalog, null, 2));
+      return;
+    }
+    if (!catalog.length) return console.log("(no models matched)");
+    // Mark which are in the running session's scope, if any.
+    const scope = isRunning() ? ((await request({ cmd: "status" })).find((e) => e.type === "status")?.scope || []) : [];
+    let provider = null;
+    for (const m of catalog.sort((a, b) => a.provider.localeCompare(b.provider) || b.contextWindow - a.contextWindow)) {
+      if (m.provider !== provider) {
+        provider = m.provider;
+        console.log(chalk.bold(`\n${provider}`));
+      }
+      const inScope = scope.includes(m.selector) ? chalk.green(" ◉") : "  ";
+      console.log(`${inScope} ${chalk.cyan(m.selector.padEnd(38))} ${chalk.dim(m.contextWindow.toLocaleString().padStart(9) + " ctx")}  ${m.name}`);
+    }
+    console.log(chalk.dim("\nselect exact selectors above with `omp-rpc start --models \"…\"`, or pick interactively: `omp-rpc pick`"));
+  });
+
+program
+  .command("pick")
+  .description("Interactively pick a model scope, then start / save / print it")
+  .option("-c, --cwd <dir>", "working directory for the omp session", process.cwd())
+  .option("--save <name>", "save the chosen scope as a preset")
+  .option("--print", "print the equivalent `omp-rpc start` command instead of starting")
+  .action(async (opts) => {
+    if (!process.stdin.isTTY) die("✗ `pick` needs a terminal. Non-interactive? Use `omp-rpc models --json` + `omp-rpc start --models`.");
+    const { runPicker } = await import("../src/picker.js");
+    const picked = await runPicker(await loadCatalog());
+    if (!picked) return;
+    const name = opts.save || picked.saveAs;
+    if (name) {
+      presets.save(name, { models: picked.models, active: picked.active });
+      console.log(chalk.green(`saved preset "${name}"`));
+    }
+    if (opts.print) {
+      console.log(`\nomp-rpc start --models "${picked.models.join(",")}" --model "${picked.active}"`);
+      return;
+    }
+    await spawnDaemon({ active: picked.active, scope: picked.models, cwd: opts.cwd });
+  });
+
+program
+  .command("presets [action] [name]")
+  .description("List saved presets, or `presets rm <name>` to delete one")
+  .action((action, name) => {
+    if (action === "rm") {
+      if (!name) die("✗ usage: omp-rpc presets rm <name>");
+      console.log(presets.remove(name) ? `removed "${name}"` : `no preset named "${name}"`);
+      return;
+    }
+    const all = presets.list();
+    const names = Object.keys(all);
+    if (!names.length) return console.log("(no presets — create one with `omp-rpc pick`)");
+    for (const n of names) {
+      const p = all[n];
+      console.log(`${chalk.bold(n)}  ${chalk.dim(`active=${p.active}`)}`);
+      for (const m of p.models) console.log(`  ${m === p.active ? chalk.green("◉") : "·"} ${m}`);
+    }
   });
 
 program.parseAsync();
