@@ -1,0 +1,11 @@
+# omp-rpc-cli mounts as `ecp rpc`. The kit owns its own CLI, so the
+# whole surface is delegated: `ecp rpc <anything...>` goes to the
+# kit's own parser, which owns the argument parsing.
+#
+# The argv runs with the kit's checkout as the working directory, so
+# the relative path to the script is the kit's own layout.
+
+[passthrough]
+summary = "A persistent RPC session as a daemon, with a thin CLI to send it tasks"
+argv = ["node", "bin/omp-rpc.js"]
+requires = ["node"]
