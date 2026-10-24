@@ -1,0 +1,38 @@
+# omp-rpc-cli: the doc map for agents
+
+## This repo
+
+- [README.md](README.md): what the tool is, install, the command
+  overview, safety model. The one starting point for a human.
+- [AGENTS.md](AGENTS.md): the boundary, stated as rules an agent obeys.
+- [docs/quickstart.md](docs/quickstart.md): the numbered path from
+  nothing to a running delegated session, every command copy-pasteable.
+- [docs/how-to.md](docs/how-to.md): day-to-day operation, grouped by
+  task: drive and review, monitor an unattended task, steer and abort,
+  switch models live, presets, capture output, recover a wedged session.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md): the operator's reference: the
+  command surface, the runtime files, the daemon wire protocol, every
+  error string with its fix, recovery procedures.
+- [docs/LEARNINGS.md](docs/LEARNINGS.md): design and protocol findings
+  from wiring a client to omp's RPC (why RPC over ACP, the event
+  framing, the selector rules, the gotchas).
+- skills/using-omp-rpc/SKILL.md: the command mechanics as an agent
+  skill (references/: commands, models, safety, architecture).
+- skills/delegating-to-omp-rpc/SKILL.md: when and how to delegate to
+  the session, as an agent skill.
+- examples/session.sh: a scripted, runnable example session.
+- [CONTRIBUTING.md](CONTRIBUTING.md): setup, tests, and the change bar.
+- [SECURITY.md](SECURITY.md): private vulnerability reporting, scope.
+
+## The family (AI ECP)
+
+- the family catalog (the map home; in the private control-plane repo).
+- repo-guards: governance kit (release parity, prose, CI gates; `guv`).
+- actions-runner: config-driven local agent-pipeline runner (`arun`).
+- ecp-toolkit: the `ecp` control-plane CLI that mounts the family
+  (designed, not yet released).
+
+## Facts
+
+Version 0.3.0, npm `omp-rpc-cli`, Node >= 20, MIT. 14 platform-runner
+tests pass (`npm test`). Verified 2026-10-22.
