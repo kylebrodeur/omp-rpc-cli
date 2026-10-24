@@ -1,0 +1,19 @@
+# omp-rpc-cli mounts as `ecp omp-rpc-cli`. The kit owns its own CLI, so
+# the whole surface is delegated: `ecp omp-rpc-cli <anything...>` goes to
+# the kit's own parser, which owns the argument parsing.
+#
+# The argv runs with the kit's checkout as the working directory, so
+# the relative path to the script is the kit's own layout.
+#
+# There is NO `requires` here, and that is deliberate. `requires` names
+# the CONFIG KEYS a command needs, and the gate refuses the command
+# when one of them is unset. It does not name an executable. A manifest
+# that said `requires = ["node"]` was asking for a config key named
+# "node", and every mounted command failed with "omp-rpc-cli is not
+# configured: missing node" before it ever ran. A missing EXECUTABLE is
+# the executor's job, and it says so: "node is not available on PATH",
+# exit 127.
+
+[passthrough]
+summary = "A persistent RPC session as a daemon, with a thin CLI to send it tasks"
+argv = ["node", "bin/omp-rpc.js"]
